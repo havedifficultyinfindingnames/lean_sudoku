@@ -1,0 +1,10 @@
+name = "LeanSudoku"
+version = "0.1.0"
+defaultTargets = ["leansudoku"]
+
+[[lean_lib]]
+name = "LeanSudoku"
+
+[[lean_exe]]
+name = "leansudoku"
+root = "Main"
