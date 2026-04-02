@@ -1,3 +1,6 @@
--- This module serves as the root of the `LeanSudoku` library.
--- Import modules here that should be built as part of the library.
+import LeanSudoku.Utils
+import LeanSudoku.SudokuCell
+import LeanSudoku.Board
 import LeanSudoku.Sudoku
+import LeanSudoku.Sukaku
+import LeanSudoku.Solver

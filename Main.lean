@@ -1,6 +1,6 @@
 import LeanSudoku
 
-open leanSudoku
+open LeanSudoku
 
 def row0 : Fin indexRange := ⟨0, by decide⟩
 def row8 : Fin indexRange := ⟨8, by decide⟩
