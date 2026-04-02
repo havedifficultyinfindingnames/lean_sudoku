@@ -1,3 +1,5 @@
+import Mathlib
+
 namespace Vector
 def modify (v : Vector α n) (i : Fin n) (f : α → α) : Vector α n :=
   v.set i (f <| v.get i)
@@ -17,8 +19,6 @@ def finRangeFromTo {n : Nat} (start ending : Fin n) : List (Fin n) :=
       ⟨k, hkLt⟩
   else
     []
-def product {α β} (xs : List α) (ys : List β) : List (α × β) :=
-  xs.flatMap fun x ↦ ys.map fun y ↦ (x, y)
 end List
 
 namespace leanSudoku
@@ -117,18 +117,15 @@ def setCell (cells : Board) (row col : Fin indexRange) (cell : SudokuCell) : Boa
 
 theorem getCell_setCell (cells : Board) (row col : Fin indexRange) (cell : SudokuCell) :
   getCell (setCell cells row col cell) row col = cell := by
-  unfold getCell setCell Vector.modify
-  simp [Vector.get]
+  simp [getCell, setCell, Vector.modify, Vector.get]
 
 theorem setCell_getCell_same (cells : Board) (row col : Fin indexRange) :
   setCell cells row col (getCell cells row col) = cells := by
-  unfold setCell getCell Vector.modify
-  simp [Vector.get]
+  simp [setCell, getCell, Vector.modify, Vector.get]
 
 theorem setCell_overwrite (cells : Board) (row col : Fin indexRange) (cell₁ cell₂ : SudokuCell) :
   setCell (setCell cells row col cell₁) row col cell₂ = setCell cells row col cell₂ := by
-  unfold Board.setCell Vector.modify
-  simp [Vector.get]
+  simp [Board.setCell, Vector.modify, Vector.get]
 
 theorem getCell_setCell_sameRow_of_neCol (cells : Board) (row col col' : Fin indexRange) (cell : SudokuCell) (hcol : col' ≠ col) :
   getCell (setCell cells row col cell) row col' = getCell cells row col' := by
@@ -153,7 +150,6 @@ theorem getCell_setCell_of_neRow
   (cell : SudokuCell)
   (hrow : row' ≠ row) :
   getCell (setCell cells row col cell) row' col' = getCell cells row' col' := by
-  unfold getCell setCell Vector.modify
   have hNat : (row : Nat) ≠ (row' : Nat) := by
     intro hEq
     apply hrow
@@ -253,26 +249,46 @@ def peersOf (row col : Fin indexRange) : List (Fin indexRange × Fin indexRange)
 def iterUnits : List (List (Fin indexRange × Fin indexRange)) :=
   coordPairs.map fun (r, c) ↦ (r, c) :: (peersOf r c)
 
+theorem not_mem_peersOf_self
+  (row col : Fin indexRange) :
+  (row, col) ∉ peersOf row col := by
+  native_decide +revert
+
+theorem mem_peersOf_sameRow_neCol
+  (row col col' : Fin indexRange)
+  (hcol : col' ≠ col) :
+  (row, col') ∈ Board.peersOf row col := by
+  native_decide +revert
+
+theorem mem_peersOf_sameCol_neRow
+  (row row' col : Fin indexRange)
+  (hrow : row' ≠ row) :
+  (row', col) ∈ Board.peersOf row col := by
+  native_decide +revert
+
+theorem mem_peersOf_sameBox_neCell
+  (row col row' col' : Fin indexRange)
+  (hRowBox : row' / dimension = row / dimension)
+  (hColBox : col' / dimension = col / dimension)
+  (hCell : (row', col') ≠ (row, col)) :
+  (row', col') ∈ Board.peersOf row col := by
+  native_decide +revert
+
 theorem mem_peersOf_symm
   {row col pr pc : Fin indexRange}
   (hMem : (pr, pc) ∈ peersOf row col) :
   (row, col) ∈ peersOf pr pc := by
   native_decide +revert
 
-theorem not_mem_peersOf_self
-  (row col : Fin indexRange) :
-  (row, col) ∉ peersOf row col := by
-  native_decide +revert
-
 end Board
 
 structure Sudoku where
   cells : Board
+deriving Repr, DecidableEq
+
+instance : Inhabited Sudoku := ⟨⟨Vector.replicate indexRange (Vector.replicate indexRange SudokuCell.invalid)⟩⟩
 
 namespace Sudoku
-
-def empty : Sudoku :=
-  { cells := Vector.replicate indexRange (Vector.replicate indexRange SudokuCell.invalid) }
 
 def isValid (s : Sudoku) : Bool :=
   s.cells.fixedPositions.all fun (r, c, num) ↦
@@ -293,27 +309,17 @@ theorem isValid_of_isFullyValid {s : Sudoku} (h : s.isFullyValid = true) : s.isV
   unfold isValid
   apply List.all_eq_true.mpr
   rintro ⟨r, c, num⟩ hTriple
-  have hPeersFullyValid :
-      (Board.peersOf r c).all
-        (fun (pr, pc) ↦
-          match s.cells.getCell pr pc with
-          | .Fixed n => n ≠ num
-          | .Notes candidates => num ∉ candidates) = true :=
-    (List.all_eq_true.mp h) (r, c, num) hTriple
+  have hPeers := (List.all_eq_true.mp h) (r, c, num) hTriple
   apply List.all_eq_true.mpr
   rintro ⟨pr, pc⟩ hPeer
-  have hThisPeerFullyValid :
-      (match s.cells.getCell pr pc with
-      | .Fixed n => n ≠ num
-      | .Notes candidates => num ∉ candidates) = true :=
-    (List.all_eq_true.mp hPeersFullyValid) (pr, pc) hPeer
+  have hPeer := (List.all_eq_true.mp hPeers) (pr, pc) hPeer
   cases hCell : s.cells.getCell pr pc with
   | Fixed n =>
-    simpa [hCell] using hThisPeerFullyValid
+    simpa [hCell] using hPeer
   | Notes candidates =>
     simp [hCell]
 
-theorem emptyIsFullyValid : isFullyValid empty = true := by decide
+theorem emptyIsFullyValid : isFullyValid default = true := by native_decide
 
 def isComplete (s : Sudoku) : Bool :=
   coordPairs.all fun (r, c) ↦
@@ -467,7 +473,7 @@ theorem setCellInvalid_iff_deleteNote {s : Sudoku} (row col : Fin indexRange) (h
   have mem_foldl_filter_neq_iff
     (nums init : List SudokuInt)
     (x : SudokuInt) :
-    x ∈ nums.foldl (fun cs n ↦ cs.filter (fun c ↦ !decide (c = n))) init
+    x ∈ nums.foldl (fun cs n ↦ cs.filter (fun c ↦ c ≠ n)) init
       ↔ x ∈ init ∧ ∀ n, n ∈ nums → x ≠ n := by
     induction nums generalizing init with
     | nil =>
@@ -476,8 +482,8 @@ theorem setCellInvalid_iff_deleteNote {s : Sudoku} (row col : Fin indexRange) (h
       constructor
       · intro hMem
         have hMemIh :
-            x ∈ init.filter (fun c ↦ !decide (c = n)) ∧ ∀ a, a ∈ rest → x ≠ a := by
-          exact (ih (init := init.filter (fun c ↦ !decide (c = n)))).1 (by simpa [List.foldl_cons] using hMem)
+            x ∈ init.filter (fun c ↦ c ≠ n) ∧ ∀ a, a ∈ rest → x ≠ a := by
+          exact (ih (init := init.filter (fun c ↦ c ≠ n))).1 (by simpa [List.foldl_cons] using hMem)
         have hxInInit : x ∈ init := (List.mem_filter.mp hMemIh.1).1
         have hxNeN : x ≠ n := by
           simpa using (List.mem_filter.mp hMemIh.1).2
@@ -492,19 +498,19 @@ theorem setCellInvalid_iff_deleteNote {s : Sudoku} (row col : Fin indexRange) (h
         | inr haRest =>
           exact hMemIh.2 a haRest
       · intro hInfo
-        have hxFilter : x ∈ init.filter (fun c ↦ !decide (c = n)) :=
+        have hxFilter : x ∈ init.filter (fun c ↦ c ≠ n) :=
           List.mem_filter.mpr ⟨hInfo.1, by simpa using hInfo.2 n (by simp)⟩
         have hRest : ∀ a, a ∈ rest → x ≠ a := by
           intro a ha
           exact hInfo.2 a (by simp [ha])
         have hMemIh :
-            x ∈ rest.foldl (fun cs n ↦ cs.filter (fun c ↦ !decide (c = n))) (init.filter (fun c ↦ !decide (c = n))) :=
-          (ih (init := init.filter (fun c ↦ !decide (c = n)))).2 ⟨hxFilter, hRest⟩
+            x ∈ rest.foldl (fun cs n ↦ cs.filter (fun c ↦ c ≠ n)) (init.filter (fun c ↦ c ≠ n)) :=
+          (ih (init := init.filter (fun c ↦ c ≠ n))).2 ⟨hxFilter, hRest⟩
         simpa [List.foldl_cons] using hMemIh
 
   have foldl_filter_self_eq_nil
     (nums : List SudokuInt) :
-    nums.foldl (fun cs n ↦ cs.filter (fun c ↦ !decide (c = n))) nums = [] := by
+    nums.foldl (fun cs n ↦ cs.filter (fun c ↦ c ≠ n)) nums = [] := by
     apply List.eq_nil_iff_forall_not_mem.mpr
     intro x hx
     have hxInfo : x ∈ nums ∧ ∀ n, n ∈ nums → x ≠ n :=
@@ -514,17 +520,20 @@ theorem setCellInvalid_iff_deleteNote {s : Sudoku} (row col : Fin indexRange) (h
   have foldl_deleteNote_fromNotes
     (nums init : List SudokuInt) :
     nums.foldl (fun cell n ↦ SudokuCell.deleteNote cell n) (SudokuCell.Notes init)
-      = SudokuCell.Notes (nums.foldl (fun cs n ↦ cs.filter (fun c ↦ !decide (c = n))) init) := by
+      = SudokuCell.Notes (nums.foldl (fun cs n ↦ cs.filter (fun c ↦ c ≠ n)) init) := by
     induction nums generalizing init with
     | nil =>
       simp
     | cons n rest ih =>
-      simpa [List.foldl_cons, SudokuCell.deleteNote] using ih (init := init.filter (fun c ↦ !decide (c = n)))
+      simpa [List.foldl_cons, SudokuCell.deleteNote] using ih (init := init.filter (fun c ↦ c ≠ n))
 
   have foldl_deleteNote_notes_allCandidates_invalid
     (candidates : List SudokuInt) :
     candidates.foldl (fun cell n ↦ SudokuCell.deleteNote cell n) (SudokuCell.Notes candidates) = SudokuCell.invalid := by
-    simp [foldl_deleteNote_fromNotes, SudokuCell.invalid, foldl_filter_self_eq_nil]
+    have hSelf :
+        candidates.foldl (fun cs n ↦ cs.filter (fun c ↦ c ≠ n)) candidates = [] :=
+      foldl_filter_self_eq_nil candidates
+    simpa [foldl_deleteNote_fromNotes, SudokuCell.invalid] using hSelf
 
   cases hCell : s.cells.getCell row col with
   | Fixed n =>
@@ -856,7 +865,7 @@ private theorem listFoldDeleteNote_preserves_peerCondAt
       peerCondAt_deleteNote s r c tr tc num fixedNum hCond
     simpa [List.foldl_cons] using ih (s := s.deleteNote r c num) (hCond := hCond')
 
-private theorem fixedPeer_ne_num_of_isFullyValid
+theorem fixedPeer_ne_num_of_isFullyValid
   {s : Sudoku}
   (h : s.isFullyValid = true)
   (row col : Fin indexRange)
@@ -1150,7 +1159,7 @@ def rebuildNotes (s : Sudoku) : Sudoku :=
   ) <| { cells := Vector.replicate indexRange (Vector.replicate indexRange SudokuCell.empty) }
 
 theorem rebuildNotes_isFullyValid {s : Sudoku} : (rebuildNotes s).isFullyValid = true := by
-  let base : Sudoku :=
+  let base : Sudoku := -- TODO
     { cells := Vector.replicate indexRange (Vector.replicate indexRange SudokuCell.empty) }
   have hBase : base.isFullyValid = true := by decide
   have hFold :
@@ -1185,10 +1194,11 @@ end Sudoku
 structure Sukaku where
   cells : Board
   h : Sudoku.isFullyValid (Sudoku.mk cells) = true
+deriving Repr, DecidableEq
+
+instance : Inhabited Sukaku := ⟨⟨Vector.replicate indexRange (Vector.replicate indexRange SudokuCell.empty), by native_decide⟩⟩
 
 namespace Sukaku
-
-def empty : Sukaku := { cells := Vector.replicate indexRange (Vector.replicate indexRange SudokuCell.empty), h := by decide }
 
 def isValid (s : Sukaku) : Bool :=
   let inCellValid := coordPairs.all fun (r, c) ↦
@@ -1201,38 +1211,81 @@ def isValid (s : Sukaku) : Bool :=
     indices.all fun n ↦ n ∈ seen
   inCellValid && crossCellValid
 
-theorem emptyIsValid : isValid empty = true := by decide
+theorem defaultIsValid : isValid default = true := by native_decide
 
 theorem anyCellValid_of_isValid {s : Sukaku} (h : isValid s = true) : ∀ r c, s.cells.getCell r c ≠ SudokuCell.invalid := by
-  intro r c
-  have hAll :
-    ∀ a, a ∈ indices → ∀ b, b ∈ indices → s.cells.getCell a b ≠ SudokuCell.invalid := by
-    have hProp :
+  have hProp :
       (∀ (a : Fin indexRange), a ∈ indices →
         ∀ (b : Fin indexRange), b ∈ indices →
           s.cells.getCell a b ≠ SudokuCell.invalid) ∧
-          (∀ (unit : List (Fin indexRange × Fin indexRange)), unit ∈ Board.iterUnits →
-            ∀ (n : Fin indexRange), n ∈ indices →
-              ∃ pr pc, (pr, pc) ∈ unit ∧
-                n ∈
-                  match s.cells.getCell pr pc with
-                  | .Fixed num => [num]
-                  | .Notes candidates => candidates) := by
-      simpa [isValid, coordPairs] using h
-    exact hProp.1
-  have hr : r ∈ indices := by simp [indices]
-  have hc : c ∈ indices := by simp [indices]
-  exact hAll r hr c hc
+      (∀ (unit : List (Fin indexRange × Fin indexRange)), unit ∈ Board.iterUnits →
+        ∀ (n : Fin indexRange), n ∈ indices →
+          ∃ pr pc, (pr, pc) ∈ unit ∧
+            n ∈
+              match s.cells.getCell pr pc with
+              | .Fixed num => [num]
+              | .Notes candidates => candidates) := by
+    simpa [isValid, coordPairs] using h
+  intro r c
+  exact hProp.1 r (by simp [indices]) c (by simp [indices])
 
 def isComplete (s : Sukaku) : Bool :=
   Sudoku.mk s.cells |>.isComplete
 
 def remainingBlanks (s : Sukaku) : Nat :=
-  List.product indices indices |>.foldl (fun acc (r, c) ↦
+  List.product indices indices |>.countP fun (r, c) ↦
     match s.cells.getCell r c with
-    | .Fixed _ => acc
-    | .Notes _ => acc + 1
-  ) 0
+    | .Fixed _ => false
+    | .Notes _ => true
+
+private theorem allCellFixed_of_remainingBlanks {s : Sukaku} (h0 : s.remainingBlanks = 0) :
+  ∀ row col : Fin indexRange, (s.cells.getCell row col).isFixed = true := by
+  intro r c
+  cases hCell : s.cells.getCell r c with
+  | Fixed n => trivial
+  | Notes candidates =>
+    have hCountZero :
+        List.countP
+          (fun (p : Fin indexRange × Fin indexRange) ↦
+            match s.cells.getCell p.1 p.2 with
+            | .Fixed _ => false
+            | .Notes _ => true)
+          (List.product indices indices) = 0 := by
+      simpa [Sukaku.remainingBlanks] using h0
+    have hNotTrue :=
+      (List.countP_eq_zero.mp hCountZero)
+        (r, c)
+        (by simp [indices])
+    have hTrueHere :
+        (match s.cells.getCell r c with
+        | .Fixed _ => false
+        | .Notes _ => true) = true := by
+      simp [hCell]
+    exact False.elim (hNotTrue hTrueHere)
+
+theorem remainingBlanks_of_remainBlank {s : Sukaku} (hRemain : ∃ row col : Fin indexRange, (s.cells.getCell row col).isNotes = true) :
+  0 < s.remainingBlanks := by
+  apply Nat.zero_lt_of_ne_zero
+  intro hZero
+  have hCountZero :
+      List.countP
+        (fun (p : Fin indexRange × Fin indexRange) ↦
+          match s.cells.getCell p.1 p.2 with
+          | .Fixed _ => false
+          | .Notes _ => true)
+        (List.product indices indices) = 0 := by
+    simpa [Sukaku.remainingBlanks] using hZero
+  rcases hRemain with ⟨row, col, hIsNotes⟩
+  have hNotTrue :=
+    (List.countP_eq_zero.mp hCountZero)
+      (row, col)
+      (by simp [indices])
+  have hTrueHere :
+      (match s.cells.getCell row col with
+      | .Fixed _ => false
+      | .Notes _ => true) = true := by
+    simpa [SudokuCell.isNotes] using hIsNotes
+  exact hNotTrue hTrueHere
 
 mutual
 
@@ -1314,7 +1367,7 @@ private theorem deleteNoteHelper_noNewNotes_of_fill
       rw [hEqDel] at hx
       simpa using hx
   | Notes candidates =>
-    let filtered : List SudokuInt := candidates.filter (fun x ↦ !decide (x = num))
+    let filtered : List SudokuInt := candidates.filter (fun x ↦ x ≠ num)
     have hDel : SudokuCell.deleteNote (SudokuCell.Notes candidates) num = SudokuCell.Notes filtered := by
       simp [filtered, SudokuCell.deleteNote]
     have hSetSubset :
@@ -1332,7 +1385,7 @@ private theorem deleteNoteHelper_noNewNotes_of_fill
           have hxInFilter : x ∈ filtered := by
             rw [hTarget] at hx
             simpa [SudokuCell.allCandidates] using hx
-          have hxInFilter' : x ∈ candidates.filter (fun x ↦ !decide (x = num)) := by
+          have hxInFilter' : x ∈ candidates.filter (fun x ↦ x ≠ num) := by
             simpa [filtered] using hxInFilter
           have hxInCandidates : x ∈ candidates := (List.mem_filter.mp hxInFilter').1
           simpa [hCell, SudokuCell.allCandidates] using hxInCandidates
@@ -1355,10 +1408,10 @@ private theorem deleteNoteHelper_noNewNotes_of_fill
       have hEqDelNil :
           deleteNoteHelper remaining cells (row, col) num =
             cells.setCell row col (SudokuCell.Notes []) := by
-        have hFilterEq : candidates.filter (fun x ↦ !decide (x = num)) = [] := by
-          simpa [filtered] using hFiltered
+        have hFilterEqNot : List.filter (fun x ↦ !decide (x = num)) candidates = filtered := by
+          simp [filtered]
         unfold deleteNoteHelper
-        simp [hCell, SudokuCell.allCandidates, hFilterEq]
+        simp [hCell, SudokuCell.allCandidates, hFilterEqNot, hFiltered]
       have hEqDel :
           deleteNoteHelper remaining cells (row, col) num =
             cells.setCell row col (SudokuCell.Notes filtered) := by
@@ -1371,7 +1424,7 @@ private theorem deleteNoteHelper_noNewNotes_of_fill
         have hInFilter : candidate' ∈ filtered := by
           rw [hFiltered]
           simp
-        have hInFilter' : candidate' ∈ candidates.filter (fun x ↦ !decide (x = num)) := by
+        have hInFilter' : candidate' ∈ candidates.filter (fun x ↦ x ≠ num) := by
           simpa [filtered] using hInFilter
         have hInCandidates : candidate' ∈ candidates := (List.mem_filter.mp hInFilter').1
         have hLegalMove : candidate' ∈ (cells.getCell row col).allCandidates := by
@@ -1397,10 +1450,10 @@ private theorem deleteNoteHelper_noNewNotes_of_fill
         have hEqDel :
             deleteNoteHelper remaining cells (row, col) num =
               fillNumberHelper remaining (cells.setCell row col (SudokuCell.Notes [candidate'])) (row, col) candidate' := by
-          have hFilterEq : candidates.filter (fun x ↦ !decide (x = num)) = [candidate'] := by
-            simpa [filtered] using hFiltered
+          have hFilterEqNot : List.filter (fun x ↦ !decide (x = num)) candidates = filtered := by
+            simp [filtered]
           unfold deleteNoteHelper
-          simp [hCell, SudokuCell.allCandidates, hFilterEq]
+          simp [hCell, SudokuCell.allCandidates, hFilterEqNot, hFiltered]
         rw [hEqDel]
         intro x hx
         exact hSetSubsetSingle (hFillSubsetSet hx)
@@ -1408,10 +1461,10 @@ private theorem deleteNoteHelper_noNewNotes_of_fill
         have hEqDelMany :
             deleteNoteHelper remaining cells (row, col) num =
               cells.setCell row col (SudokuCell.Notes (candidate' :: b :: rest')) := by
-          have hFilterEq : candidates.filter (fun x ↦ !decide (x = num)) = candidate' :: b :: rest' := by
-            simpa [filtered] using hFiltered
+          have hFilterEqNot : List.filter (fun x ↦ !decide (x = num)) candidates = filtered := by
+            simp [filtered]
           unfold deleteNoteHelper
-          simp [hCell, SudokuCell.allCandidates, hFilterEq]
+          simp [hCell, SudokuCell.allCandidates, hFilterEqNot, hFiltered]
         have hEqDel :
             deleteNoteHelper remaining cells (row, col) num =
               cells.setCell row col (SudokuCell.Notes filtered) := by
@@ -1565,7 +1618,7 @@ private theorem deleteNoteHelper_keeps_isFullyValid_of_fill
         simp [hCell, hEq]
       simpa [hEqDel] using hValid
   | Notes candidates =>
-    let filtered : List SudokuInt := candidates.filter (fun x ↦ !decide (x = num))
+    let filtered : List SudokuInt := candidates.filter (fun x ↦ x ≠ num)
     have hDeleteValid :
         (Sudoku.mk (cells.setCell row col (SudokuCell.Notes filtered))).isFullyValid = true := by
       have hDel := Sudoku.deleteNote_keeps_isFullyValid (s := Sudoku.mk cells) hValid row col num
@@ -1575,10 +1628,10 @@ private theorem deleteNoteHelper_keeps_isFullyValid_of_fill
       have hEqDel :
           deleteNoteHelper remaining cells (row, col) num =
             cells.setCell row col (SudokuCell.Notes []) := by
-        have hFilterEq : candidates.filter (fun x ↦ !decide (x = num)) = [] := by
-          simpa [filtered] using hFiltered
+        have hFilterEqNot : List.filter (fun x ↦ !decide (x = num)) candidates = filtered := by
+          simp [filtered]
         unfold deleteNoteHelper
-        simp [hCell, SudokuCell.allCandidates, hFilterEq]
+        simp [hCell, SudokuCell.allCandidates, hFilterEqNot, hFiltered]
       simpa [hEqDel, hFiltered] using hDeleteValid
     | cons cand rest =>
       cases rest with
@@ -1586,10 +1639,10 @@ private theorem deleteNoteHelper_keeps_isFullyValid_of_fill
         have hEqDel :
             deleteNoteHelper remaining cells (row, col) num =
               fillNumberHelper remaining (cells.setCell row col (SudokuCell.Notes [cand])) (row, col) cand := by
-          have hFilterEq : candidates.filter (fun x ↦ !decide (x = num)) = [cand] := by
-            simpa [filtered] using hFiltered
+          have hFilterEqNot : List.filter (fun x ↦ !decide (x = num)) candidates = filtered := by
+            simp [filtered]
           unfold deleteNoteHelper
-          simp [hCell, SudokuCell.allCandidates, hFilterEq]
+          simp [hCell, SudokuCell.allCandidates, hFilterEqNot, hFiltered]
         rw [hEqDel]
         have hLegalMoveSet :
             cand ∈ ((cells.setCell row col (SudokuCell.Notes [cand])).getCell row col).allCandidates := by
@@ -1603,10 +1656,10 @@ private theorem deleteNoteHelper_keeps_isFullyValid_of_fill
         have hEqDel :
             deleteNoteHelper remaining cells (row, col) num =
               cells.setCell row col (SudokuCell.Notes (cand :: b :: rest')) := by
-          have hFilterEq : candidates.filter (fun x ↦ !decide (x = num)) = cand :: b :: rest' := by
-            simpa [filtered] using hFiltered
+          have hFilterEqNot : List.filter (fun x ↦ !decide (x = num)) candidates = filtered := by
+            simp [filtered]
           unfold deleteNoteHelper
-          simp [hCell, SudokuCell.allCandidates, hFilterEq]
+          simp [hCell, SudokuCell.allCandidates, hFilterEqNot, hFiltered]
         simpa [hEqDel, hFiltered] using hDeleteValid
 
 private def peerCondAtS
@@ -1792,10 +1845,10 @@ private theorem deleteNoteHelper_self_num_absent
         simpa [hCell, SudokuCell.allCandidates] using hIn
       exact hEq hNumEq.symm
   | Notes candidates =>
-    let cands' := candidates.filter (fun x ↦ !decide (x = num))
+    let cands' := candidates.filter (fun x ↦ x ≠ num)
     have hNotInCands' : num ∉ cands' := by
       intro hIn
-      have hInFilter : num ∈ candidates.filter (fun x ↦ !decide (x = num)) := by
+      have hInFilter : num ∈ candidates.filter (fun x ↦ x ≠ num) := by
         simp [cands'] at hIn
       simp at hInFilter
     cases hCands' : cands' with
@@ -1803,11 +1856,10 @@ private theorem deleteNoteHelper_self_num_absent
       have hEqDel :
           deleteNoteHelper remaining cells (row, col) num =
             cells.setCell row col (SudokuCell.Notes []) := by
-        have hFilterEq :
-            (SudokuCell.Notes candidates).allCandidates.filter (fun x ↦ !decide (x = num)) = [] := by
-          simpa [SudokuCell.allCandidates, cands'] using hCands'
+        have hFilterEqNot : List.filter (fun x ↦ !decide (x = num)) candidates = cands' := by
+          simp [cands']
         unfold deleteNoteHelper
-        simp [hCell, hFilterEq]
+        simp [hCell, SudokuCell.allCandidates, hFilterEqNot, hCands']
       rw [hEqDel]
       rw [Board.getCell_setCell cells row col (SudokuCell.Notes [])]
       simp [SudokuCell.allCandidates]
@@ -1817,18 +1869,17 @@ private theorem deleteNoteHelper_self_num_absent
         have hCandNe : cand ≠ num := by
           have hCandIn : cand ∈ cands' := by
             simp [hCands']
-          have hCandInFilter : cand ∈ candidates.filter (fun x ↦ !decide (x = num)) := by
+          have hCandInFilter : cand ∈ candidates.filter (fun x ↦ x ≠ num) := by
             simpa [cands'] using hCandIn
           simp at hCandInFilter
           exact hCandInFilter.2
         have hEqDel :
             deleteNoteHelper remaining cells (row, col) num =
               fillNumberHelper remaining (cells.setCell row col (SudokuCell.Notes [cand])) (row, col) cand := by
-          have hFilterEq :
-              (SudokuCell.Notes candidates).allCandidates.filter (fun x ↦ !decide (x = num)) = [cand] := by
-            simpa [SudokuCell.allCandidates, cands'] using hCands'
+          have hFilterEqNot : List.filter (fun x ↦ !decide (x = num)) candidates = cands' := by
+            simp [cands']
           unfold deleteNoteHelper
-          simp [hCell, hFilterEq]
+          simp [hCell, SudokuCell.allCandidates, hFilterEqNot, hCands']
         have hLegalMoveSet :
             cand ∈ ((cells.setCell row col (SudokuCell.Notes [cand])).getCell row col).allCandidates := by
           have hTarget :
@@ -1855,11 +1906,10 @@ private theorem deleteNoteHelper_self_num_absent
         have hEqDel :
             deleteNoteHelper remaining cells (row, col) num =
               cells.setCell row col (SudokuCell.Notes (cand :: b :: rest')) := by
-          have hFilterEq :
-              (SudokuCell.Notes candidates).allCandidates.filter (fun x ↦ !decide (x = num)) = cand :: b :: rest' := by
-            simpa [SudokuCell.allCandidates, cands'] using hCands'
+          have hFilterEqNot : List.filter (fun x ↦ !decide (x = num)) candidates = cands' := by
+            simp [cands']
           unfold deleteNoteHelper
-          simp [hCell, hFilterEq]
+          simp [hCell, SudokuCell.allCandidates, hFilterEqNot, hCands']
         rw [hEqDel]
         have hTarget :
             (cells.setCell row col (SudokuCell.Notes (cand :: b :: rest'))).getCell row col = SudokuCell.Notes (cand :: b :: rest') := by
@@ -2020,6 +2070,77 @@ private theorem deleteNoteHelper_keeps_isFullyValid (remaining : Nat) {s : Sudok
             (s := Sudoku.mk cells) hValid' r c n hLegalMove'))
     s.cells row col num hValid
 
+private theorem isValid_of_noNewNotes
+  {s s' : Sukaku}
+  (hNoNew : ∀ r c : Fin indexRange,
+    (s.cells.getCell r c).allCandidates ⊇ (s'.cells.getCell r c).allCandidates)
+  (hValid' : s'.isValid = true) :
+  s.isValid = true := by
+  have hProp' :
+      (∀ (a : Fin indexRange), a ∈ indices →
+        ∀ (b : Fin indexRange), b ∈ indices →
+          s'.cells.getCell a b ≠ SudokuCell.invalid) ∧
+      (∀ (unit : List (Fin indexRange × Fin indexRange)), unit ∈ Board.iterUnits →
+        ∀ (n : Fin indexRange), n ∈ indices →
+          ∃ pr pc, (pr, pc) ∈ unit ∧
+            n ∈
+              match s'.cells.getCell pr pc with
+              | .Fixed num => [num]
+              | .Notes candidates => candidates) := by
+    simpa [isValid, coordPairs] using hValid'
+  have hInCell :
+      ∀ (a : Fin indexRange), a ∈ indices →
+        ∀ (b : Fin indexRange), b ∈ indices →
+          s.cells.getCell a b ≠ SudokuCell.invalid := by
+    intro a ha b hb
+    by_contra hOldInvalid
+    have hSubset := hNoNew a b
+    have hNewNotInvalid := hProp'.1 a ha b hb
+    have hNewAllEmpty : (s'.cells.getCell a b).allCandidates = [] := by
+      apply List.eq_nil_iff_forall_not_mem.mpr
+      intro x hx
+      have hxOld : x ∈ (s.cells.getCell a b).allCandidates := hSubset hx
+      simp [hOldInvalid, SudokuCell.invalid, SudokuCell.allCandidates] at hxOld
+    have hNewInvalid : s'.cells.getCell a b = SudokuCell.invalid := by
+      cases hCellNew : s'.cells.getCell a b with
+      | Fixed n =>
+        have hImpossible : ([n] : List SudokuInt) = [] := by
+          simp [SudokuCell.allCandidates, hCellNew] at hNewAllEmpty
+        cases hImpossible
+      | Notes candidates =>
+        have hCandidatesEmpty : candidates = [] := by
+          simpa [SudokuCell.allCandidates, hCellNew] using hNewAllEmpty
+        simp [SudokuCell.invalid, hCandidatesEmpty]
+    exact hNewNotInvalid hNewInvalid
+  have hCross :
+      ∀ (unit : List (Fin indexRange × Fin indexRange)), unit ∈ Board.iterUnits →
+        ∀ (n : Fin indexRange), n ∈ indices →
+          ∃ pr pc, (pr, pc) ∈ unit ∧
+            n ∈
+              match s.cells.getCell pr pc with
+              | .Fixed num => [num]
+              | .Notes candidates => candidates := by
+    intro unit hUnit n hn
+    rcases hProp'.2 unit hUnit n hn with ⟨pr, pc, hMem, hInNew⟩
+    refine ⟨pr, pc, hMem, ?_⟩
+    have hInNew' : n ∈ (s'.cells.getCell pr pc).allCandidates := by
+      simpa [SudokuCell.allCandidates] using hInNew
+    have hInOld' : n ∈ (s.cells.getCell pr pc).allCandidates := hNoNew pr pc hInNew'
+    simpa [SudokuCell.allCandidates] using hInOld'
+  have hProp :
+      (∀ (a : Fin indexRange), a ∈ indices →
+        ∀ (b : Fin indexRange), b ∈ indices →
+          s.cells.getCell a b ≠ SudokuCell.invalid) ∧
+      (∀ (unit : List (Fin indexRange × Fin indexRange)), unit ∈ Board.iterUnits →
+        ∀ (n : Fin indexRange), n ∈ indices →
+          ∃ pr pc, (pr, pc) ∈ unit ∧
+            n ∈
+              match s.cells.getCell pr pc with
+              | .Fixed num => [num]
+              | .Notes candidates => candidates) :=
+    ⟨hInCell, hCross⟩
+  simpa [isValid, coordPairs] using hProp
+
 def fillNumber (s : Sukaku) (row col : Fin indexRange) (num : SudokuInt) (hLegalMove : num ∈ (s.cells.getCell row col).allCandidates) : Sukaku :=
   ⟨fillNumberHelper (remainingBlanks s) s.cells (row, col) num, fillNumberHelper_keeps_isFullyValid (remainingBlanks s) s.h row col num hLegalMove⟩
 
@@ -2036,9 +2157,817 @@ theorem deleteNote_noNewNotes (s : Sukaku) (row col : Fin indexRange) (num : Sud
   ∀ r c : Fin indexRange, (s.cells.getCell r c).allCandidates ⊇ (s'.cells.getCell r c).allCandidates :=
     deleteNoteHelper_noNewNotes (remainingBlanks s) s.h row col num
 
+theorem isValid_of_fillNumber_validAfter
+  {s : Sukaku}
+  {hLegalMove : num ∈ (s.cells.getCell row col).allCandidates}
+  (hValid : (s.fillNumber row col num hLegalMove).isValid = true) :
+  s.isValid = true := by
+  have hNoNew :
+      ∀ r c : Fin indexRange,
+        (s.cells.getCell r c).allCandidates ⊇
+          ((s.fillNumber row col num hLegalMove).cells.getCell r c).allCandidates := by
+    simpa using fillNumber_noNewNotes s row col num hLegalMove
+  exact isValid_of_noNewNotes
+    (s := s)
+    (s' := s.fillNumber row col num hLegalMove)
+    hNoNew
+    hValid
+
+theorem isValid_of_deleteNote_validAfter
+  {s : Sukaku}
+  {hLegalMove : num ∈ (s.cells.getCell row col).allCandidates}
+  (hValid : (s.deleteNote row col num hLegalMove).isValid = true) :
+  s.isValid = true := by
+  have hNoNew :
+      ∀ r c : Fin indexRange,
+        (s.cells.getCell r c).allCandidates ⊇
+          ((s.deleteNote row col num hLegalMove).cells.getCell r c).allCandidates := by
+    simpa using deleteNote_noNewNotes s row col num hLegalMove
+  exact isValid_of_noNewNotes
+    (s := s)
+    (s' := s.deleteNote row col num hLegalMove)
+    hNoNew
+    hValid
+
+theorem isValid_of_remainingBlanks_eq_zero
+  (s : Sukaku)
+  (h0 : s.remainingBlanks = 0) :
+  s.isValid = true := by
+  have hInCell :
+      ∀ (a : Fin indexRange), a ∈ indices →
+        ∀ (b : Fin indexRange), b ∈ indices →
+          s.cells.getCell a b ≠ SudokuCell.invalid := by
+    intro a ha b hb
+    have hFixed : (s.cells.getCell a b).isFixed = true :=
+      allCellFixed_of_remainingBlanks h0 a b
+    cases hCell : s.cells.getCell a b with
+    | Fixed n => simp [SudokuCell.invalid]
+    | Notes candidates =>
+      simp [SudokuCell.isFixed, hCell] at hFixed
+  have hCross :
+      ∀ (unit : List (Fin indexRange × Fin indexRange)), unit ∈ Board.iterUnits →
+        ∀ (n : Fin indexRange), n ∈ indices →
+          ∃ pr pc, (pr, pc) ∈ unit ∧
+            n ∈
+              match s.cells.getCell pr pc with
+              | .Fixed num => [num]
+              | .Notes candidates => candidates := by
+    intro unit hUnit n hn
+    rcases (by simpa [Board.iterUnits, coordPairs, List.mem_map] using hUnit :
+      ∃ r ∈ indices, ∃ c ∈ indices, (r, c) :: Board.peersOf r c = unit) with ⟨r, hr, c0, hc0, hEqUnit⟩
+    let f : Fin indexRange → SudokuInt := fun cc ↦
+      match s.cells.getCell r cc with
+      | .Fixed v => v
+      | .Notes _ => n
+    have hfEq : ∀ cc : Fin indexRange, s.cells.getCell r cc = SudokuCell.Fixed (f cc) := by
+      intro cc
+      have hFixed : (s.cells.getCell r cc).isFixed = true :=
+        allCellFixed_of_remainingBlanks h0 r cc
+      cases hCell : s.cells.getCell r cc with
+      | Fixed v => simp [f, hCell]
+      | Notes candidates =>
+        simp [SudokuCell.isFixed, hCell] at hFixed
+    have hfInj : Function.Injective f := by
+      intro c1 c2 hEq
+      by_contra hNe
+      have hPeerMem : (r, c2) ∈ Board.peersOf r c1 :=
+        Board.mem_peersOf_sameRow_neCol r c1 c2 (by simpa [eq_comm] using hNe)
+      have hFixed1 : s.cells.getCell r c1 = SudokuCell.Fixed (f c1) := hfEq c1
+      have hFixed2 : s.cells.getCell r c2 = SudokuCell.Fixed (f c2) := hfEq c2
+      have hNeVal : f c2 ≠ f c1 := by
+        exact Sudoku.fixedPeer_ne_num_of_isFullyValid
+          (s := Sudoku.mk s.cells)
+          s.h
+          r
+          c1
+          (f c1)
+          (by simp [hFixed1])
+          (hPeerMem := hPeerMem)
+          (hPeerFixed := hFixed2)
+      exact hNeVal (by simpa [eq_comm] using hEq)
+    have hfSurj : Function.Surjective f :=
+      (Finite.injective_iff_surjective (f := f)).1 hfInj
+    rcases hfSurj n with ⟨cn, hcn⟩
+    have hMemUnit : (r, cn) ∈ (r, c0) :: Board.peersOf r c0 := by
+      by_cases hcn0 : cn = c0
+      · simp [hcn0]
+      · have hPeer : (r, cn) ∈ Board.peersOf r c0 :=
+          Board.mem_peersOf_sameRow_neCol r c0 cn (by simpa [eq_comm] using hcn0)
+        simp [hPeer]
+    have hCellN : s.cells.getCell r cn = SudokuCell.Fixed n := by
+      calc
+        s.cells.getCell r cn = SudokuCell.Fixed (f cn) := hfEq cn
+        _ = SudokuCell.Fixed n := by simp [hcn]
+    refine ⟨r, cn, ?_⟩
+    refine ⟨by simpa [hEqUnit] using hMemUnit, ?_⟩
+    rw [hCellN]
+    exact List.mem_cons_self
+  have hProp :
+      (∀ (a : Fin indexRange), a ∈ indices →
+        ∀ (b : Fin indexRange), b ∈ indices →
+          s.cells.getCell a b ≠ SudokuCell.invalid) ∧
+      (∀ (unit : List (Fin indexRange × Fin indexRange)), unit ∈ Board.iterUnits →
+        ∀ (n : Fin indexRange), n ∈ indices →
+          ∃ pr pc, (pr, pc) ∈ unit ∧
+            n ∈
+              match s.cells.getCell pr pc with
+              | .Fixed num => [num]
+              | .Notes candidates => candidates) :=
+    ⟨hInCell, hCross⟩
+  simpa [Sukaku.isValid, coordPairs] using hProp
+
+private def fixedOrInvalid (cell : SudokuCell) : Prop :=
+  cell.isFixed = true ∨ cell = SudokuCell.invalid
+
+private theorem deleteNoteHelper_fixedOrInvalid_of_fill
+  (remaining : Nat)
+  (hFill :
+    ∀ (cells : Board) (row col : Fin indexRange) (num : SudokuInt)
+      (tr tc : Fin indexRange),
+      fixedOrInvalid (cells.getCell tr tc) →
+      fixedOrInvalid ((fillNumberHelper remaining cells (row, col) num).getCell tr tc)) :
+  ∀ (cells : Board) (row col : Fin indexRange) (num : SudokuInt)
+    (tr tc : Fin indexRange),
+    fixedOrInvalid (cells.getCell tr tc) →
+    fixedOrInvalid ((deleteNoteHelper remaining cells (row, col) num).getCell tr tc) := by
+  intro cells row col num tr tc hStart
+  cases hCell : cells.getCell row col with
+  | Fixed n =>
+    by_cases hEq : n = num
+    · have hEqDel :
+        deleteNoteHelper remaining cells (row, col) num = cells.setCell row col SudokuCell.invalid := by
+        unfold deleteNoteHelper
+        simp [hCell, hEq]
+      rw [hEqDel]
+      by_cases hr : tr = row
+      · cases hr
+        by_cases hc : tc = col
+        · cases hc
+          right
+          simpa using Board.getCell_setCell cells row col SudokuCell.invalid
+        · have hSame :
+            (cells.setCell row col SudokuCell.invalid).getCell row tc = cells.getCell row tc := by
+            simpa using
+              Board.getCell_setCell_sameRow_of_neCol cells row col tc SudokuCell.invalid hc
+          simpa [hSame] using hStart
+      · have hSame :
+          (cells.setCell row col SudokuCell.invalid).getCell tr tc = cells.getCell tr tc := by
+          simpa using
+            Board.getCell_setCell_of_neRow cells row tr col tc SudokuCell.invalid hr
+        simpa [hSame] using hStart
+    · have hEqDel : deleteNoteHelper remaining cells (row, col) num = cells := by
+        unfold deleteNoteHelper
+        simp [hCell, hEq]
+      simpa [hEqDel] using hStart
+  | Notes candidates =>
+    let filtered : List SudokuInt := candidates.filter (fun x ↦ x ≠ num)
+    cases hFiltered : filtered with
+    | nil =>
+      have hFilterEqNot : List.filter (fun x ↦ !decide (x = num)) candidates = filtered := by
+        simp [filtered]
+      have hEqDel :
+          deleteNoteHelper remaining cells (row, col) num =
+            cells.setCell row col (SudokuCell.Notes []) := by
+        unfold deleteNoteHelper
+        simp [hCell, SudokuCell.allCandidates, hFilterEqNot, hFiltered]
+      rw [hEqDel]
+      by_cases hr : tr = row
+      · cases hr
+        by_cases hc : tc = col
+        · cases hc
+          right
+          simpa [SudokuCell.invalid] using Board.getCell_setCell cells row col (SudokuCell.Notes [])
+        · have hSame :
+            (cells.setCell row col (SudokuCell.Notes [])).getCell row tc = cells.getCell row tc := by
+            simpa using
+              Board.getCell_setCell_sameRow_of_neCol cells row col tc (SudokuCell.Notes []) hc
+          simpa [hSame] using hStart
+      · have hSame :
+          (cells.setCell row col (SudokuCell.Notes [])).getCell tr tc = cells.getCell tr tc := by
+          simpa using
+            Board.getCell_setCell_of_neRow cells row tr col tc (SudokuCell.Notes []) hr
+        simpa [hSame] using hStart
+    | cons cand rest =>
+      cases rest with
+      | nil =>
+        have hNotSelf : (tr, tc) ≠ (row, col) := by
+          intro hEqPair
+          cases hEqPair
+          cases hStart with
+          | inl hFixed =>
+            simp [SudokuCell.isFixed, hCell] at hFixed
+          | inr hInv =>
+            have hCandidatesNil : candidates = [] := by
+              have hEqCell : SudokuCell.Notes candidates = SudokuCell.invalid := by
+                simpa [hCell] using hInv
+              simpa [SudokuCell.invalid] using hEqCell
+            simp [filtered, hCandidatesNil] at hFiltered
+        have hSetEq :
+            (cells.setCell row col (SudokuCell.Notes [cand])).getCell tr tc = cells.getCell tr tc := by
+          by_cases hr : tr = row
+          · cases hr
+            have htc : tc ≠ col := by
+              intro hEq
+              apply hNotSelf
+              simp [hEq]
+            simpa using
+              Board.getCell_setCell_sameRow_of_neCol cells row col tc (SudokuCell.Notes [cand]) htc
+          · simpa using
+              Board.getCell_setCell_of_neRow cells row tr col tc (SudokuCell.Notes [cand]) hr
+        have hStartSet : fixedOrInvalid ((cells.setCell row col (SudokuCell.Notes [cand])).getCell tr tc) := by
+          simpa [fixedOrInvalid, hSetEq] using hStart
+        have hFilterEqNot : List.filter (fun x ↦ !decide (x = num)) candidates = filtered := by
+          simp [filtered]
+        have hEqDel :
+            deleteNoteHelper remaining cells (row, col) num =
+              fillNumberHelper remaining (cells.setCell row col (SudokuCell.Notes [cand])) (row, col) cand := by
+          unfold deleteNoteHelper
+          simp [hCell, SudokuCell.allCandidates, hFilterEqNot, hFiltered]
+        rw [hEqDel]
+        exact hFill (cells.setCell row col (SudokuCell.Notes [cand])) row col cand tr tc hStartSet
+      | cons b rest' =>
+        have hNotSelf : (tr, tc) ≠ (row, col) := by
+          intro hEqPair
+          cases hEqPair
+          cases hStart with
+          | inl hFixed =>
+            simp [SudokuCell.isFixed, hCell] at hFixed
+          | inr hInv =>
+            have hCandidatesNil : candidates = [] := by
+              have hEqCell : SudokuCell.Notes candidates = SudokuCell.invalid := by
+                simpa [hCell] using hInv
+              simpa [SudokuCell.invalid] using hEqCell
+            simp [filtered, hCandidatesNil] at hFiltered
+        have hFilterEqNot : List.filter (fun x ↦ !decide (x = num)) candidates = filtered := by
+          simp [filtered]
+        have hEqDel :
+            deleteNoteHelper remaining cells (row, col) num =
+              cells.setCell row col (SudokuCell.Notes (cand :: b :: rest')) := by
+          unfold deleteNoteHelper
+          simp [hCell, SudokuCell.allCandidates, hFilterEqNot, hFiltered]
+        rw [hEqDel]
+        by_cases hr : tr = row
+        · cases hr
+          have htc : tc ≠ col := by
+            intro hEq
+            apply hNotSelf
+            simp [hEq]
+          have hSame :
+              (cells.setCell row col (SudokuCell.Notes (cand :: b :: rest'))).getCell row tc = cells.getCell row tc := by
+            simpa using
+              Board.getCell_setCell_sameRow_of_neCol cells row col tc (SudokuCell.Notes (cand :: b :: rest')) htc
+          simpa [fixedOrInvalid, hSame] using hStart
+        · have hSame :
+            (cells.setCell row col (SudokuCell.Notes (cand :: b :: rest'))).getCell tr tc = cells.getCell tr tc := by
+            simpa using
+              Board.getCell_setCell_of_neRow cells row tr col tc (SudokuCell.Notes (cand :: b :: rest')) hr
+          simpa [fixedOrInvalid, hSame] using hStart
+
+private theorem fill_delete_fixedOrInvalid_aux :
+  ∀ remaining,
+    (∀ (cells : Board) (row col : Fin indexRange) (num : SudokuInt)
+      (tr tc : Fin indexRange),
+      fixedOrInvalid (cells.getCell tr tc) →
+      fixedOrInvalid ((fillNumberHelper remaining cells (row, col) num).getCell tr tc))
+    ∧
+    (∀ (cells : Board) (row col : Fin indexRange) (num : SudokuInt)
+      (tr tc : Fin indexRange),
+      fixedOrInvalid (cells.getCell tr tc) →
+      fixedOrInvalid ((deleteNoteHelper remaining cells (row, col) num).getCell tr tc)) := by
+  intro remaining
+  induction remaining with
+  | zero =>
+    have hFill0 :
+        ∀ (cells : Board) (row col : Fin indexRange) (num : SudokuInt)
+          (tr tc : Fin indexRange),
+          fixedOrInvalid (cells.getCell tr tc) →
+          fixedOrInvalid ((fillNumberHelper 0 cells (row, col) num).getCell tr tc) := by
+      intro cells row col num tr tc hStart
+      simpa [fillNumberHelper] using hStart
+    have hDelete0 :
+        ∀ (cells : Board) (row col : Fin indexRange) (num : SudokuInt)
+          (tr tc : Fin indexRange),
+          fixedOrInvalid (cells.getCell tr tc) →
+          fixedOrInvalid ((deleteNoteHelper 0 cells (row, col) num).getCell tr tc) :=
+      deleteNoteHelper_fixedOrInvalid_of_fill 0 hFill0
+    exact ⟨hFill0, hDelete0⟩
+  | succ rem ih =>
+    have hFillRem :
+        ∀ (cells : Board) (row col : Fin indexRange) (num : SudokuInt)
+          (tr tc : Fin indexRange),
+          fixedOrInvalid (cells.getCell tr tc) →
+          fixedOrInvalid ((fillNumberHelper rem cells (row, col) num).getCell tr tc) := ih.1
+    have hDeleteRem :
+        ∀ (cells : Board) (row col : Fin indexRange) (num : SudokuInt)
+          (tr tc : Fin indexRange),
+          fixedOrInvalid (cells.getCell tr tc) →
+          fixedOrInvalid ((deleteNoteHelper rem cells (row, col) num).getCell tr tc) := ih.2
+    have hFillSucc :
+        ∀ (cells : Board) (row col : Fin indexRange) (num : SudokuInt)
+          (tr tc : Fin indexRange),
+          fixedOrInvalid (cells.getCell tr tc) →
+          fixedOrInvalid ((fillNumberHelper (Nat.succ rem) cells (row, col) num).getCell tr tc) := by
+      intro cells row col num tr tc hStart
+      let coords := Board.peersOf row col
+      let cellsFold := coords.foldl (fun cs coord ↦ deleteNoteHelper rem cs coord num) cells
+      have hFold : fixedOrInvalid (cellsFold.getCell tr tc) := by
+        have hAux :
+            ∀ (cs : List (Fin indexRange × Fin indexRange)) (cells0 : Board),
+              fixedOrInvalid (cells0.getCell tr tc) →
+              fixedOrInvalid ((cs.foldl (fun su coord ↦ deleteNoteHelper rem su coord num) cells0).getCell tr tc) := by
+          intro cs
+          induction cs with
+          | nil =>
+            intro cells0 hStart0
+            simpa using hStart0
+          | cons coord rest ihRest =>
+            intro cells0 hStart0
+            rcases coord with ⟨r, c⟩
+            have hStep :
+                fixedOrInvalid ((deleteNoteHelper rem cells0 (r, c) num).getCell tr tc) :=
+              hDeleteRem cells0 r c num tr tc hStart0
+            simpa [List.foldl_cons] using
+              ihRest (cells0 := deleteNoteHelper rem cells0 (r, c) num) hStep
+        exact hAux coords cells hStart
+      unfold fillNumberHelper
+      by_cases hr : tr = row
+      · cases hr
+        by_cases hc : tc = col
+        · cases hc
+          left
+          have hTarget :
+              ((cellsFold.setCell row col (SudokuCell.Fixed num)).getCell row col).isFixed = true := by
+            simpa [SudokuCell.isFixed] using
+              congrArg SudokuCell.isFixed (Board.getCell_setCell cellsFold row col (SudokuCell.Fixed num))
+          simpa [fillNumberHelper, coords, cellsFold, fixedOrInvalid] using hTarget
+        · have hSame :
+            (cellsFold.setCell row col (SudokuCell.Fixed num)).getCell row tc = cellsFold.getCell row tc := by
+            simpa using
+              Board.getCell_setCell_sameRow_of_neCol cellsFold row col tc (SudokuCell.Fixed num) hc
+          simpa [fillNumberHelper, coords, cellsFold, fixedOrInvalid, hSame] using hFold
+      · have hSame :
+          (cellsFold.setCell row col (SudokuCell.Fixed num)).getCell tr tc = cellsFold.getCell tr tc := by
+          simpa using
+            Board.getCell_setCell_of_neRow cellsFold row tr col tc (SudokuCell.Fixed num) hr
+        simpa [fillNumberHelper, coords, cellsFold, fixedOrInvalid, hSame] using hFold
+    have hDeleteSucc :
+        ∀ (cells : Board) (row col : Fin indexRange) (num : SudokuInt)
+          (tr tc : Fin indexRange),
+          fixedOrInvalid (cells.getCell tr tc) →
+          fixedOrInvalid ((deleteNoteHelper (Nat.succ rem) cells (row, col) num).getCell tr tc) :=
+      deleteNoteHelper_fixedOrInvalid_of_fill (Nat.succ rem) hFillSucc
+    have hPairSucc :
+        (∀ (cells : Board) (row col : Fin indexRange) (num : SudokuInt)
+          (tr tc : Fin indexRange),
+          fixedOrInvalid (cells.getCell tr tc) →
+          fixedOrInvalid ((fillNumberHelper (Nat.succ rem) cells (row, col) num).getCell tr tc))
+        ∧
+        (∀ (cells : Board) (row col : Fin indexRange) (num : SudokuInt)
+          (tr tc : Fin indexRange),
+          fixedOrInvalid (cells.getCell tr tc) →
+          fixedOrInvalid ((deleteNoteHelper (Nat.succ rem) cells (row, col) num).getCell tr tc)) :=
+      ⟨hFillSucc, hDeleteSucc⟩
+    simpa [Nat.succ_eq_add_one] using hPairSucc
+
+private theorem fillNumber_fixedOrInvalid_of_fixed
+  (s : Sukaku)
+  (row col : Fin indexRange)
+  (num : SudokuInt)
+  (hLegalMove : num ∈ (s.cells.getCell row col).allCandidates)
+  (tr tc : Fin indexRange)
+  (hFixed : (s.cells.getCell tr tc).isFixed = true) :
+  fixedOrInvalid ((s.fillNumber row col num hLegalMove).cells.getCell tr tc) := by
+  rcases fill_delete_fixedOrInvalid_aux (remainingBlanks s) with ⟨hFill, _⟩
+  simpa [Sukaku.fillNumber, fixedOrInvalid] using
+    hFill s.cells row col num tr tc (Or.inl hFixed)
+
+private theorem deleteNote_fixedOrInvalid_of_fixed
+  (s : Sukaku)
+  (row col : Fin indexRange)
+  (num : SudokuInt)
+  (hLegalMove : num ∈ (s.cells.getCell row col).allCandidates)
+  (tr tc : Fin indexRange)
+  (hFixed : (s.cells.getCell tr tc).isFixed = true) :
+  fixedOrInvalid ((s.deleteNote row col num hLegalMove).cells.getCell tr tc) := by
+  rcases fill_delete_fixedOrInvalid_aux (remainingBlanks s) with ⟨_, hDelete⟩
+  simpa [Sukaku.deleteNote, fixedOrInvalid] using
+    hDelete s.cells row col num tr tc (Or.inl hFixed)
+
+private theorem remainingBlanks_le_of_notesImp
+  (s s' : Sukaku)
+  (hImp : ∀ r c : Fin indexRange,
+    (s'.cells.getCell r c).isNotes = true → (s.cells.getCell r c).isNotes = true) :
+  s'.remainingBlanks ≤ s.remainingBlanks := by
+  unfold Sukaku.remainingBlanks
+  exact List.countP_mono_left (l := List.product indices indices) (p := fun rc ↦ (s'.cells.getCell rc.1 rc.2).isNotes)
+    (q := fun rc ↦ (s.cells.getCell rc.1 rc.2).isNotes)
+    (by
+      intro rc hMem hTrue
+      exact hImp rc.1 rc.2 hTrue)
+
+theorem remainingBlanks_le_of_fillNumber_ifValidAfter
+  (s : Sukaku)
+  (row col : Fin indexRange)
+  (num : SudokuInt)
+  (hLegalMove : num ∈ (s.cells.getCell row col).allCandidates)
+  (hValidAfter : (s.fillNumber row col num hLegalMove).isValid = true) :
+  (s.fillNumber row col num hLegalMove).remainingBlanks ≤ s.remainingBlanks := by
+  let s' := s.fillNumber row col num hLegalMove
+  have hNoInvalid : ∀ r c : Fin indexRange, s'.cells.getCell r c ≠ SudokuCell.invalid :=
+    anyCellValid_of_isValid (s := s') hValidAfter
+  have hImp : ∀ r c : Fin indexRange,
+      (s'.cells.getCell r c).isNotes = true → (s.cells.getCell r c).isNotes = true := by
+    intro r c hNewNotes
+    by_cases hOldFixed : (s.cells.getCell r c).isFixed = true
+    · have hFixedOrInvalid : fixedOrInvalid (s'.cells.getCell r c) :=
+        fillNumber_fixedOrInvalid_of_fixed s row col num hLegalMove r c hOldFixed
+      cases hFixedOrInvalid with
+      | inl hNewFixed =>
+          have hFalse : False := by
+            cases hCellNew : s'.cells.getCell r c with
+            | Fixed v =>
+              simp [SudokuCell.isNotes, hCellNew] at hNewNotes
+            | Notes candidates =>
+              simp [SudokuCell.isFixed, hCellNew] at hNewFixed
+          exact False.elim hFalse
+      | inr hNewInvalid =>
+        exact False.elim ((hNoInvalid r c) hNewInvalid)
+    · cases hOldCell : s.cells.getCell r c with
+      | Fixed n =>
+        simp [SudokuCell.isFixed, hOldCell] at hOldFixed
+      | Notes candidates =>
+        simp [SudokuCell.isNotes]
+  simpa [s'] using remainingBlanks_le_of_notesImp s s' hImp
+
+theorem remainingBlanks_le_of_deleteNote_ifValidAfter
+  (s : Sukaku)
+  (row col : Fin indexRange)
+  (num : SudokuInt)
+  (hLegalMove : num ∈ (s.cells.getCell row col).allCandidates)
+  (hValidAfter : (s.deleteNote row col num hLegalMove).isValid = true) :
+  (s.deleteNote row col num hLegalMove).remainingBlanks ≤ s.remainingBlanks := by
+  let s' := s.deleteNote row col num hLegalMove
+  have hNoInvalid : ∀ r c : Fin indexRange, s'.cells.getCell r c ≠ SudokuCell.invalid :=
+    anyCellValid_of_isValid (s := s') hValidAfter
+  have hImp : ∀ r c : Fin indexRange,
+      (s'.cells.getCell r c).isNotes = true → (s.cells.getCell r c).isNotes = true := by
+    intro r c hNewNotes
+    by_cases hOldFixed : (s.cells.getCell r c).isFixed = true
+    · have hFixedOrInvalid : fixedOrInvalid (s'.cells.getCell r c) :=
+        deleteNote_fixedOrInvalid_of_fixed s row col num hLegalMove r c hOldFixed
+      cases hFixedOrInvalid with
+      | inl hNewFixed =>
+          have hFalse : False := by
+            cases hCellNew : s'.cells.getCell r c with
+            | Fixed v =>
+              simp [SudokuCell.isNotes, hCellNew] at hNewNotes
+            | Notes candidates =>
+              simp [SudokuCell.isFixed, hCellNew] at hNewFixed
+          exact False.elim hFalse
+      | inr hNewInvalid =>
+        exact False.elim ((hNoInvalid r c) hNewInvalid)
+    · cases hOldCell : s.cells.getCell r c with
+      | Fixed n =>
+        simp [SudokuCell.isFixed, hOldCell] at hOldFixed
+      | Notes candidates =>
+        simp [SudokuCell.isNotes]
+  simpa [s'] using remainingBlanks_le_of_notesImp s s' hImp
+
+theorem remainingBlanks_lt_of_fillNumber_ifValidAfter
+  (s : Sukaku)
+  (row col : Fin indexRange)
+  (num : SudokuInt)
+  (hLegalMove : num ∈ (s.cells.getCell row col).allCandidates)
+  (hUsableMove : (s.cells.getCell row col).isNotes = true)
+  (hValidAfter : (s.fillNumber row col num hLegalMove).isValid = true) :
+  (s.fillNumber row col num hLegalMove).remainingBlanks < s.remainingBlanks := by
+  let s' := s.fillNumber row col num hLegalMove
+  have hLe : s'.remainingBlanks ≤ s.remainingBlanks := by
+    simpa [s'] using
+      remainingBlanks_le_of_fillNumber_ifValidAfter s row col num hLegalMove hValidAfter
+  let l : List (Fin indexRange × Fin indexRange) := List.product indices indices
+  let p : (Fin indexRange × Fin indexRange) → Bool := fun rc ↦ (s'.cells.getCell rc.1 rc.2).isNotes
+  let q : (Fin indexRange × Fin indexRange) → Bool := fun rc ↦ (s.cells.getCell rc.1 rc.2).isNotes
+  let w : Fin indexRange × Fin indexRange := (row, col)
+  have hwMem : w ∈ l := by
+    simp [l, w, indices]
+  have hPerm : l.Perm (w :: l.erase w) := List.perm_cons_erase hwMem
+  have hpwFalse : p w = false := by
+    have hPos : 0 < s.remainingBlanks :=
+      remainingBlanks_of_remainBlank ⟨row, col, hUsableMove⟩
+    have hCellFixed : s'.cells.getCell row col = SudokuCell.Fixed num := by
+      cases hRem : s.remainingBlanks with
+      | zero =>
+        have hFalse : False := by
+          simp [hRem] at hPos
+        exact False.elim hFalse
+      | succ rem =>
+        have hTarget :
+            ((List.foldl (fun cells coord ↦ deleteNoteHelper rem cells coord num) s.cells (Board.peersOf row col)).setCell row col (SudokuCell.Fixed num)).getCell row col
+              = SudokuCell.Fixed num := by
+          simpa using
+            Board.getCell_setCell
+              (List.foldl (fun cells coord ↦ deleteNoteHelper rem cells coord num) s.cells (Board.peersOf row col))
+              row col (SudokuCell.Fixed num)
+        simpa [s', Sukaku.fillNumber, hRem, fillNumberHelper] using hTarget
+    simp [p, w, hCellFixed, SudokuCell.isNotes]
+  have hqwTrue : q w = true := by
+    simpa [q, w, SudokuCell.isNotes] using hUsableMove
+  have hImp : ∀ rc ∈ l, p rc = true → q rc = true := by
+    intro rc hMem hP
+    exact (by
+      have hNoInvalid : ∀ r c : Fin indexRange, s'.cells.getCell r c ≠ SudokuCell.invalid :=
+        anyCellValid_of_isValid (s := s') hValidAfter
+      by_cases hOldFixed : (s.cells.getCell rc.1 rc.2).isFixed = true
+      · have hFixedOrInvalid : fixedOrInvalid (s'.cells.getCell rc.1 rc.2) :=
+          fillNumber_fixedOrInvalid_of_fixed s row col num hLegalMove rc.1 rc.2 hOldFixed
+        cases hFixedOrInvalid with
+        | inl hNewFixed =>
+          have hFalse : False := by
+            cases hCellNew : s'.cells.getCell rc.1 rc.2 with
+            | Fixed v =>
+              simp [p, SudokuCell.isNotes, hCellNew] at hP
+            | Notes candidates =>
+              simp [SudokuCell.isFixed, hCellNew] at hNewFixed
+          exact False.elim hFalse
+        | inr hNewInvalid =>
+          exact False.elim ((hNoInvalid rc.1 rc.2) hNewInvalid)
+      · cases hOldCell : s.cells.getCell rc.1 rc.2 with
+        | Fixed n =>
+          simp [SudokuCell.isFixed, hOldCell] at hOldFixed
+        | Notes candidates =>
+          simp [q, SudokuCell.isNotes, hOldCell])
+  have hLeErase : List.countP p (l.erase w) ≤ List.countP q (l.erase w) :=
+    List.countP_mono_left (l := l.erase w) (p := p) (q := q)
+      (by
+        intro rc hMem hP
+        exact hImp rc (by simpa using List.mem_of_mem_erase hMem) hP)
+  have hStrictCons : List.countP p (w :: l.erase w) < List.countP q (w :: l.erase w) := by
+    have hLt : List.countP p (l.erase w) < List.countP q (l.erase w) + 1 := Nat.lt_succ_of_le hLeErase
+    simpa [List.countP_cons, hpwFalse, hqwTrue, Nat.add_comm, Nat.add_left_comm, Nat.add_assoc] using hLt
+  have hStrictCount : List.countP p l < List.countP q l := by
+    calc
+      List.countP p l = List.countP p (w :: l.erase w) := (List.Perm.countP_eq p hPerm)
+      _ < List.countP q (w :: l.erase w) := hStrictCons
+      _ = List.countP q l := (List.Perm.countP_eq q hPerm).symm
+  simpa [Sukaku.remainingBlanks, l, p, q, s'] using hStrictCount
+
 def fromFixedNumbers (s : Sudoku) : Sukaku :=
   ⟨s.rebuildNotes.cells, Sudoku.rebuildNotes_isFullyValid⟩
 
 end Sukaku
+
+inductive SolverState
+  | NoSolution
+  | Partial (s : Sukaku)
+  | Solved (s : Sukaku)
+  | MultiSolution
+deriving Repr, DecidableEq
+
+instance : Inhabited SolverState := ⟨.NoSolution⟩
+
+namespace BacktrackingSolver
+
+private def pickNextCell (s : Sukaku) : Option (Fin indexRange × Fin indexRange) :=
+  List.product indices indices |>.filterMap (fun (r, c) ↦
+    match s.cells.getCell r c with
+    | .Fixed _ => none
+    | .Notes _ => some (r, c)) |>.minOn? (fun (r, c) ↦
+      (s.cells.getCell r c).allCandidates.length)
+
+private theorem remainingBlanks_of_pickNextCell_some {s : Sukaku} (hSome : (pickNextCell s).isSome = true) :
+  s.remainingBlanks > 0 := by
+  simp [pickNextCell] at hSome
+  rcases hSome with ⟨r, hr, c, hc, hCellSome⟩
+  apply Nat.zero_lt_of_ne_zero
+  simp [Sukaku.remainingBlanks]
+  refine ⟨r, hr, c, hc, ?_⟩
+  cases hCell : s.cells.getCell r c <;> simp [hCell] at hCellSome ⊢
+
+private theorem isNotes_of_pickNextCell_eq_some
+  {s : Sukaku}
+  {r c : Fin indexRange}
+  (hPick : pickNextCell s = some (r, c)) :
+  (s.cells.getCell r c).isNotes = true := by
+  unfold pickNextCell at hPick
+  have hMem :
+      (r, c) ∈
+        (List.product indices indices).filterMap
+          (fun (r, c) ↦
+            match s.cells.getCell r c with
+            | .Fixed _ => none
+            | .Notes _ => some (r, c)) :=
+    List.minOn?_mem hPick
+  rcases (List.mem_filterMap.mp hMem) with ⟨a, ha, hEq⟩
+  rcases a with ⟨ar, ac⟩
+  cases hCell : s.cells.getCell ar ac with
+  | Fixed n =>
+    simp [hCell] at hEq
+  | Notes candidates =>
+    have hPair : (ar, ac) = (r, c) := by
+      simpa [hCell] using hEq
+    cases hPair
+    simp [SudokuCell.isNotes, hCell]
+
+private theorem remainingBlanks_of_pickNextCell_eq_none {s : Sukaku} (hNone : pickNextCell s = none) :
+  s.remainingBlanks = 0 := by
+  by_contra hne
+  have hPos : 0 < s.remainingBlanks := Nat.pos_of_ne_zero hne
+  let p : (Fin indexRange × Fin indexRange) → Bool :=
+    fun (r, c) ↦
+      match s.cells.getCell r c with
+      | .Fixed _ => false
+      | .Notes _ => true
+  have hExists :
+      ∃ rc, rc ∈ List.product indices indices ∧ p rc = true := by
+    by_contra hNo
+    have hZeroCount : List.countP p (List.product indices indices) = 0 := by
+      apply List.countP_eq_zero.mpr
+      intro rc hMem
+      have hNot : ¬ (∃ hrc : rc ∈ List.product indices indices, p rc = true) := by
+        exact fun hx ↦ hNo ⟨rc, hx.1, hx.2⟩
+      intro hp
+      exact hNot ⟨hMem, hp⟩
+    have hRBZero : s.remainingBlanks = 0 := by
+      simpa [Sukaku.remainingBlanks, p] using hZeroCount
+    exact (Nat.ne_of_gt hPos) hRBZero
+  rcases hExists with ⟨rc, hMem, hP⟩
+  rcases rc with ⟨r, c⟩
+  have hSome : (pickNextCell s).isSome = true := by
+    have hInProd : r ∈ indices ∧ c ∈ indices := by
+      simpa [List.mem_product] using hMem
+    simp [pickNextCell]
+    refine ⟨r, hInProd.1, c, hInProd.2, ?_⟩
+    cases hCell : s.cells.getCell r c with
+    | Fixed n => simp [p, hCell] at hP
+    | Notes candidates => simp
+  have hSomeFalse : (pickNextCell s).isSome = false := by
+    simp [hNone]
+  simp [hSomeFalse] at hSome
+
+mutual
+
+private def solveWithFuel : (fuel : Nat) → (s : Sukaku) → s.remainingBlanks ≤ fuel → SolverState
+  | 0, s, hFuel =>
+    match hPick : pickNextCell s with
+    | none => .Solved s
+    | some _ =>
+      False.elim <| by
+        have hPos : s.remainingBlanks > 0 :=
+          remainingBlanks_of_pickNextCell_some (by simp [hPick])
+        have hZero : s.remainingBlanks = 0 := Nat.eq_zero_of_le_zero hFuel
+        simp [hZero] at hPos
+  | Nat.succ fuel, s, hFuel =>
+    match hPick : pickNextCell s with
+    | none => .Solved s
+    | some (r, c) =>
+      searchWithFuel fuel s hFuel r c hPick ((s.cells.getCell r c).allCandidates.attach) none
+
+private def searchWithFuel
+  (fuel : Nat)
+  (s : Sukaku)
+  (hFuel : s.remainingBlanks ≤ Nat.succ fuel)
+  (r c : Fin indexRange)
+  (hPick : pickNextCell s = some (r, c))
+  (rest : List {num : SudokuInt // num ∈ (s.cells.getCell r c).allCandidates})
+  (found : Option Sukaku) : SolverState :=
+  match rest with
+  | [] =>
+    match found with
+    | some sol => .Solved sol
+    | none => .NoSolution
+  | ⟨num, hLegalMove⟩ :: tail =>
+    let s' := s.fillNumber r c num hLegalMove
+    have hUsable : (s.cells.getCell r c).isNotes = true :=
+      isNotes_of_pickNextCell_eq_some hPick
+    if hValidAfter : s'.isValid = true then
+      have hDec : s'.remainingBlanks < s.remainingBlanks :=
+        Sukaku.remainingBlanks_lt_of_fillNumber_ifValidAfter s r c num hLegalMove hUsable hValidAfter
+      have hLtSucc : s'.remainingBlanks < Nat.succ fuel :=
+        Nat.lt_of_lt_of_le hDec hFuel
+      have hFuel' : s'.remainingBlanks ≤ fuel := Nat.lt_succ_iff.mp hLtSucc
+      match solveWithFuel fuel s' hFuel' with
+      | .NoSolution =>
+        searchWithFuel fuel s hFuel r c hPick tail found
+      | .MultiSolution =>
+        .MultiSolution
+      | .Solved sol =>
+        match found with
+        | none => searchWithFuel fuel s hFuel r c hPick tail (some sol)
+        | some _ => .MultiSolution
+      | .Partial _ => unreachable! -- The function never returns .Partial, so it's unreachable. however, it's hard to prove
+    else
+      searchWithFuel fuel s hFuel r c hPick tail found
+
+end
+
+private theorem isValid_of_searchWithFuel_solved
+  (fuel : Nat)
+  (ihSolve :
+    ∀ (s0 : Sukaku) (hFuel0 : s0.remainingBlanks ≤ fuel),
+      (∃ sol, solveWithFuel fuel s0 hFuel0 = .Solved sol) →
+      s0.isValid = true)
+  (s : Sukaku)
+  (hFuel : s.remainingBlanks ≤ Nat.succ fuel)
+  (r c : Fin indexRange)
+  (hPick : pickNextCell s = some (r, c))
+  (rest : List {num : SudokuInt // num ∈ (s.cells.getCell r c).allCandidates})
+  (found : Option Sukaku)
+  (hFound : ∀ sol0, found = some sol0 → s.isValid = true)
+  (hSolved : ∃ sol, searchWithFuel fuel s hFuel r c hPick rest found = .Solved sol) :
+  s.isValid = true := by
+  induction rest generalizing found with
+  | nil =>
+    rcases hSolved with ⟨sol, hEq⟩
+    cases found with
+    | none => simp [searchWithFuel] at hEq
+    | some sol0 => exact hFound sol0 rfl
+  | cons hd tl ih =>
+    rcases hSolved with ⟨sol, hEq⟩
+    rcases hd with ⟨num, hLegalMove⟩
+    let s' := s.fillNumber r c num hLegalMove
+    have hUsable : (s.cells.getCell r c).isNotes = true :=
+      isNotes_of_pickNextCell_eq_some hPick
+    by_cases hValidAfter : s'.isValid = true
+    · have hDec : s'.remainingBlanks < s.remainingBlanks :=
+        Sukaku.remainingBlanks_lt_of_fillNumber_ifValidAfter s r c num hLegalMove hUsable hValidAfter
+      have hLtSucc : s'.remainingBlanks < Nat.succ fuel :=
+        Nat.lt_of_lt_of_le hDec hFuel
+      have hFuel' : s'.remainingBlanks ≤ fuel := Nat.lt_succ_iff.mp hLtSucc
+      cases hRec : solveWithFuel fuel s' hFuel' with
+      | NoSolution =>
+        have hTail : ∃ sol, searchWithFuel fuel s hFuel r c hPick tl found = .Solved sol := by
+          exact ⟨sol, by simpa [searchWithFuel, hValidAfter, hRec, s'] using hEq⟩
+        exact ih found hFound hTail
+      | MultiSolution =>
+        simp [searchWithFuel, hValidAfter, hRec, s'] at hEq
+      | Partial s1 =>
+        simp [searchWithFuel, hValidAfter, hRec, s'] at hEq
+      | Solved sol1 =>
+        cases found with
+        | none =>
+          have hs'Valid : s'.isValid = true := ihSolve s' hFuel' ⟨sol1, by simp [hRec]⟩
+          have hsValid : s.isValid = true :=
+            Sukaku.isValid_of_fillNumber_validAfter
+              (s := s)
+              (row := r)
+              (col := c)
+              (num := num)
+              (hLegalMove := hLegalMove)
+              hs'Valid
+          have hFound' : ∀ sol0, some sol1 = some sol0 → s.isValid = true := by
+            intro sol0 hSomeEq
+            exact hsValid
+          have hTail : ∃ sol, searchWithFuel fuel s hFuel r c hPick tl (some sol1) = .Solved sol := by
+            exact ⟨sol, by simpa [searchWithFuel, hValidAfter, hRec, s'] using hEq⟩
+          exact ih (some sol1) hFound' hTail
+        | some sol0 =>
+          simp [searchWithFuel, hValidAfter, hRec, s'] at hEq
+    · have hTail : ∃ sol, searchWithFuel fuel s hFuel r c hPick tl found = .Solved sol := by
+        exact ⟨sol, by simpa [searchWithFuel, hValidAfter, s'] using hEq⟩
+      exact ih found hFound hTail
+
+def solve (s : Sukaku) : SolverState :=
+  solveWithFuel (s.remainingBlanks) s (Nat.le_refl _)
+
+theorem isValid_of_solve_solved {s : Sukaku} (hSolved : ∃ s', (solve s) = .Solved s') :
+  s.isValid = true := by
+  have hMain :
+      ∀ (fuel : Nat) (s0 : Sukaku) (hFuel : s0.remainingBlanks ≤ fuel),
+        (∃ sol, solveWithFuel fuel s0 hFuel = .Solved sol) →
+        s0.isValid = true := by
+    intro fuel
+    induction fuel with
+    | zero =>
+      intro s0 hFuel hSolved0
+      rcases hSolved0 with ⟨sol, hEq⟩
+      unfold solveWithFuel at hEq
+      split at hEq
+      · have h0 : s0.remainingBlanks = 0 := remainingBlanks_of_pickNextCell_eq_none ‹pickNextCell s0 = none›
+        exact Sukaku.isValid_of_remainingBlanks_eq_zero s0 h0
+      · exfalso
+        have hPos : s0.remainingBlanks > 0 := remainingBlanks_of_pickNextCell_some (by simp [*])
+        have hZero : s0.remainingBlanks = 0 := Nat.eq_zero_of_le_zero hFuel
+        simp [hZero] at hPos
+    | succ fuel ih =>
+      intro s0 hFuel hSolved0
+      rcases hSolved0 with ⟨sol, hEq⟩
+      unfold solveWithFuel at hEq
+      split at hEq
+      · have h0 : s0.remainingBlanks = 0 := remainingBlanks_of_pickNextCell_eq_none ‹pickNextCell s0 = none›
+        exact Sukaku.isValid_of_remainingBlanks_eq_zero s0 h0
+      · rename_i r c hPickSome
+        have hSearch :
+            ∃ sol, searchWithFuel fuel s0 hFuel r c hPickSome ((s0.cells.getCell r c).allCandidates.attach) none = .Solved sol := by
+          exact ⟨sol, by simpa [searchWithFuel] using hEq⟩
+        have hFoundInit : ∀ sol0, (none : Option Sukaku) = some sol0 → s0.isValid = true := by
+          intro sol0 hNone
+          cases hNone
+        exact isValid_of_searchWithFuel_solved fuel (fun s1 hFuel1 hSolved1 => ih s1 hFuel1 hSolved1)
+          s0 hFuel r c hPickSome ((s0.cells.getCell r c).allCandidates.attach) none hFoundInit hSearch
+  rcases hSolved with ⟨sol, hEq⟩
+  exact hMain (s.remainingBlanks) s (Nat.le_refl _) ⟨sol, by simpa [solve] using hEq⟩
+
+end BacktrackingSolver
 
 end leanSudoku
